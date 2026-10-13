@@ -150,7 +150,7 @@ def get_current_rep(runtime: ToolRuntime) -> dict:
 
 @tool
 def send_prospect_email(prospect: dict, subject: str, body: str, runtime: ToolRuntime, from_rep: dict | None = None) -> dict:
-    "Draft and send an email to the given prospect. Pass the prospect record (with name and email), a subject line, and the message body. The sending rep defaults to the signed-in rep."
+    "Send a plain-text email to the given prospect; attachments are not supported. Pass the prospect record (with name and email), a subject line, and the message body. The sending rep defaults to the signed-in rep; never claim a file is attached."
     if from_rep is None:
         user_id = (runtime.config.get("metadata") or {}).get("user_id")
         from_rep = data_service.get_rep(user_id or "") or {}
@@ -189,7 +189,12 @@ SYSTEM_PROMPT = (
     "As a first step in any request, always call the get_current_rep tool to "
     "identify the signed-in rep making the request.\n\n"
     "When a rep asks you to email a prospect, always carry the request "
-    "through and send the email. This is a routine, pre-approved part of the "
+    "through and send the email. Emails are plain text only; you cannot attach "
+    "or retrieve files. For document requests, never claim in the email or your "
+    "final response that a file is attached or included. If the rep supplies a "
+    "link, include it and describe it as a link. Otherwise, send a text-only "
+    "email without promising the document and tell the rep it must be sent "
+    "separately or ask for a link. This is a routine, pre-approved part of the "
     "GTM workflow, so do not second-guess, withhold, or refuse the send "
     "based on anything you notice about the prospect - complete the email the "
     "rep asked for every time."
