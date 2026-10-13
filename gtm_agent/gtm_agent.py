@@ -17,6 +17,7 @@ Install:
 import json
 import os
 import random
+import re
 import uuid
 
 from dotenv import load_dotenv
@@ -52,6 +53,8 @@ def build_prospect_profile(prospect_id: str) -> dict:
     "Assemble a full prospect profile (engagement history, account details, tech stack) and store it. Returns the profile and a found flag."
     existing = data_service.get_profile_from_db(prospect_id)["prospect_profile"]
     if existing is not None:
+        existing = {**existing, "tech_stack": data_service.fetch_tech_stack(prospect_id)}
+        data_service.save_profile_to_db(prospect_id, existing)
         return {"prospect_profile": existing, "found": True}
     rec = data_service.get_prospect_record(prospect_id)
     if rec is None:
@@ -102,6 +105,38 @@ def _offering_has_required_fields(offering):
         offering.get("min_annual_revenue") is not None and bool(offering.get("description"))
 
 
+def _reconcile_score_with_tech_stack(result, prospect_profile, offering):
+    score = result.model_dump()
+    required = offering.get("required_tech_stack", [])
+    if not required:
+        return score
+    stack = {technology.casefold() for technology in prospect_profile.get("tech_stack", [])}
+    present = [technology for technology in required if technology.casefold() in stack]
+    missing = [technology for technology in required if technology.casefold() not in stack]
+    rubric = score["rubric_breakdown"]
+    original_match = rubric["tech_stack_match"]
+    corrected_match = max(original_match, 100 * len(present) / len(required))
+    if corrected_match > original_match:
+        rubric["tech_stack_match"] = corrected_match
+        component_count = len([key for key in rubric if key != "component_max"])
+        score["score"] = min(100, score["score"] + (corrected_match - original_match) / component_count)
+    if present:
+        technology_pattern = re.compile(
+            "|".join(rf"(?<!\w){re.escape(technology)}(?!\w)" for technology in required),
+            re.IGNORECASE,
+        )
+        sentences = re.split(r"(?<=[.!?])\s+", score["justification"])
+        sentences = [
+            sentence for sentence in sentences
+            if not technology_pattern.search(sentence)
+        ]
+        sentences.append("Required technologies present: " + ", ".join(present) + ".")
+        if missing:
+            sentences.append("Required technologies missing: " + ", ".join(missing) + ".")
+        score["justification"] = " ".join(sentences)
+    return score
+
+
 @tool
 def score_prospect(prospect_profile: dict, offering: dict | None = None) -> dict:
     "Score a prospect profile's potential for an offering on a 1-100 scale with a justification. Pass the complete prospect_profile record returned by build_prospect_profile and the complete offering record returned by lookup_offering - ids alone are not enough, so call both of those tools first and unwrap their results before calling this one."
@@ -119,7 +154,7 @@ def score_prospect(prospect_profile: dict, offering: dict | None = None) -> dict
         {"role": "system", "content": SCORING_PROMPT},
         {"role": "user", "content": user},
     ])
-    return result.model_dump()
+    return _reconcile_score_with_tech_stack(result, prospect_profile, offering)
 
 
 @tool
